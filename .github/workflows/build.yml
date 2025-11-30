@@ -1,4 +1,6 @@
 name: Build
+permissions:
+  "contents": "write"
 
 on:
   push:
@@ -13,22 +15,67 @@ concurrency:
 
 jobs:
   build:
-
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        dotnet-version: [ '8.0.x', '10.0.x' ]
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Setup .NET SDK ${{ matrix.dotnet-version }}
+      - name: Setup .NET SDK 10.0.x
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: ${{ matrix.dotnet-version }}
+          dotnet-version: '10.0.x'
       - name: Install dependencies
         run: dotnet restore
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build -c Release --no-restore
       - name: Test
         run: dotnet test --no-restore --verbosity normal
+      - name: Publish
+        run: |
+          ./build-linux.sh
+          ./build-windows.sh
+          ./build-macos.sh
+          mkdir release-artifacts
+      - name: Compress
+        run: |
+          zip -rj release-artifacts/Discord-Status-Checker-linux-x64.zip bin/Release/net10.0/linux-x64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-linux-musl-x64.zip bin/Release/net10.0/linux-musl-x64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-linux-musl-arm64.zip bin/Release/net10.0/linux-musl-arm64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-linux-arm.zip bin/Release/net10.0/linux-arm/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-linux-arm64.zip bin/Release/net10.0/linux-arm64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-win-x64.zip bin/Release/net10.0/win-x64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-win-x86.zip bin/Release/net10.0/win-x86/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-win-arm64.zip bin/Release/net10.0/win-arm64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-macos-x64.zip bin/Release/net10.0/osx-x64/publish/*
+          zip -rj release-artifacts/Discord-Status-Checker-macos-arm64.zip bin/Release/net10.0/osx-arm64/publish/*
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: Discord-Status-Checker
+          path: release-artifacts
+  create-release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # allows for tags access
+      - uses: actions/download-artifact@v6
+        name: Download artifact
+        with:
+          name: Discord-Status-Checker
+          path: release-artifacts/
+      - name: Create release
+        uses: ncipollo/release-action@v1.20.0
+        with:
+          replacesArtifacts: true
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: "release-artifacts/*"
+          body: ${{ github.event.head_commit.message }}
+          prerelease: true
+          name: Nightly Release
+          tag: nightly-build
+      - name: Update nightly-build tag
+        run: |
+          git tag -f nightly-build
+          git push -f origin nightly-build
